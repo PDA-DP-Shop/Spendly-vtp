@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Spendly VTP Pulse</title>
+<style>
+:root{--bg:#070707;--card:#111;--line:#2b2b2b;--fg:#f5f5f5;--muted:#9a9a9a;--ok:#72f2a0;--bad:#ff6666}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1100px;margin:auto;padding:20px}.title{font-size:30px;font-weight:850}.sub{color:var(--muted);margin:4px 0 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}@media(max-width:850px){.grid{grid-template-columns:1fr}}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:15px}.card h2{font-size:16px;margin:0 0 10px}textarea{width:100%;min-height:105px;background:#090909;color:#fff;border:1px solid #333;border-radius:11px;padding:10px;font:13px ui-monospace,monospace}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.btn{border:1px solid #444;background:#eee;color:#111;border-radius:11px;padding:10px 14px;font-weight:800}.btn.secondary{background:#171717;color:#eee}.btn:disabled{opacity:.45}.codebox{background:#fff;border-radius:16px;padding:8px;margin-top:10px}.codebox canvas{width:100%;height:auto;display:block;border-radius:10px}.video{position:relative;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:4/3;margin-top:10px}.video video,.video canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.status{margin-top:9px;padding:10px;border-radius:10px;background:#090909;border:1px solid #262626;font:12px ui-monospace,monospace;min-height:35px}.ok{color:var(--ok)}.bad{color:var(--bad)}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:9px}.metric{background:#090909;border:1px solid #252525;border-radius:10px;padding:8px}.metric b{display:block;font-size:16px}.metric span{font-size:10px;color:var(--muted)}.note,.footer{font-size:12px;color:var(--muted);line-height:1.5}.footer{margin-top:14px}.result{margin-top:9px;display:none;padding:10px;border:1px solid #284d36;border-radius:10px;background:#0a160e}.result b{display:block;margin-bottom:4px}
+</style></head><body><main>
+<div class="title">Spendly VTP Pulse</div><div class="sub">Visual Transaction Protocol · circular optical field · research prototype</div>
+<div class="grid">
+<section class="card"><h2>Generate transaction pulse</h2><textarea id="payload">{"amount":499,"currency":"INR","merchant":"Spendly Demo","invoice":"SP-2026-001"}</textarea><div class="row"><button class="btn" id="generate">Generate Pulse</button><button class="btn secondary" id="selftest">Run 1000× self-test</button></div><div class="codebox"><canvas id="code" width="900" height="900"></canvas></div><div id="genStatus" class="status">Ready.</div></section>
+<section class="card"><h2>Automatic camera scanner</h2><div class="row"><button class="btn" id="start">Start automatic scan</button><button class="btn secondary" id="stop" disabled>Stop</button><button class="btn secondary" id="flip">Flip camera</button></div><div class="video"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div><div id="scanStatus" class="status">Idle · press Start automatic scan.</div><div class="metrics"><div class="metric"><b id="frames">0</b><span>frames</span></div><div class="metric"><b id="hits">0</b><span>field hits</span></div><div class="metric"><b id="decoded">0</b><span>decoded</span></div><div class="metric"><b id="fps">0</b><span>scan fps</span></div></div><div id="result" class="result"></div><p class="note">After Start the scanner continuously analyzes frames. There is no Capture button. For the first test, display the pulse on another screen, fill most of the camera view, and keep it roughly front-facing.</p></section>
+</div>
+<section class="card" style="margin-top:15px"><h2>Protocol test gates</h2><div class="note">Gate 1: binary encode/decode 1000×. Gate 2: deterministic image sampling with blur/noise/scale tests. Gate 3: live camera test on the target phone. The software can be made deterministic and testable; no honest implementation can guarantee every phone, distance, angle and lighting condition.</div></section>
+<div class="footer">The visual is intentionally not a QR/Data Matrix square grid. Circular/radial optical codes have prior art, so this is presented as a Spendly research prototype, not a claim of global novelty.</div>
+</main>
+<script>
+'use strict';
+const RINGS=4,SYMS=64,CAP=64,TAU=Math.PI*2,S=900,C=450,SECRET='Spendly-VTP-demo-key-v2';
+let packet=null,stream=null,facing='environment',raf=0,frames=0,hits=0,decoded=0,last=0,lastFrame=performance.now(),fpsCount=0;
+const $=id=>document.getElementById(id),canvas=$('code'),ctx=canvas.getContext('2d'),video=$('video'),overlay=$('overlay'),octx=overlay.getContext('2d'),work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true}),enc=new TextEncoder(),dec=new TextDecoder();
+function u32(n){return new Uint8Array([(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255])}
+function read32(a,i){return (((a[i]<<24)|(a[i+1]<<16)|(a[i+2]<<8)|a[i+3])>>>0)}
+function crc32(a){let c=0xffffffff;for(const x of a){c^=x;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0)}return(c^0xffffffff)>>>0}
+async function hash(a){return new Uint8Array(await crypto.subtle.digest('SHA-256',a))}
+function cleanText(s,n){return enc.encode(String(s||'').slice(0,n))}
+async function makePacket(o){
+ const amount=Math.max(0,Math.min(0xffffffff,Math.round(Number(o.amount)||0)));
+ const cur=String(o.currency||'INR').slice(0,3).padEnd(3,' ').toUpperCase();
+ const mer=cleanText(o.merchant,11),inv=cleanText(o.invoice,11),nonce=crypto.getRandomValues(new Uint8Array(8)),ts=Math.floor(Date.now()/1000)>>>0;
+ const body=new Uint8Array(48);body.set([86,84,80,2],0);body.set(u32(amount),4);body.set(enc.encode(cur),8);body[11]=mer.length;body.set(mer,12);body[23]=inv.length;body.set(inv,24);body.set(u32(ts),35);body.set(nonce,39);body[47]=0;
+ const out=new Uint8Array(CAP);out.set(body,0);out.set(u32(crc32(body)),48);const auth=await hash(new Uint8Array([...body,...enc.encode(SECRET)]));out.set(auth.slice(0,8),52);out.set([86,84,80,2],60);return out;
+}
+async function verify(a){
+ if(!(a instanceof Uint8Array)||a.length!==CAP)throw Error('length');
+ if(a[0]!==86||a[1]!==84||a[2]!==80||a[3]!==2||a[60]!==86||a[61]!==84||a[62]!==80||a[63]!==2)throw Error('bad header');
+ if(crc32(a.slice(0,48))!==read32(a,48))throw Error('checksum');
+ const h=await hash(new Uint8Array([...a.slice(0,48),...enc.encode(SECRET)]));for(let i=0;i<8;i++)if(h[i]!==a[52+i])throw Error('auth');
+ const ml=Math.min(a[11],11),il=Math.min(a[23],11);return{amount:read32(a,4),currency:dec.decode(a.slice(8,11)).trim(),merchant:dec.decode(a.slice(12,12+ml)),invoice:dec.decode(a.slice(24,24+il)),timestamp:read32(a,35),nonce:[...a.slice(39,47)].map(x=>x.toString(16).padStart(2,'0')).join('')};
+}
+function toValues(bytes){const v=[];for(let i=0;i<RINGS*SYMS;i++){const bit=i*2,b0=(bytes[Math.floor(bit/8)]>>(7-(bit%8)))&1,b1=(bytes[Math.floor((bit+1)/8)]>>(7-((bit+1)%8)))&1;v.push((b0<<1)|b1)}return v}
+function fromValues(v){const a=new Uint8Array(CAP);for(let i=0;i<v.length;i++){const bit=i*2;a[Math.floor(bit/8)]|=((v[i]>>1)&1)<<(7-(bit%8));a[Math.floor((bit+1)/8)]|=(v[i]&1)<<(7-((bit+1)%8))}return a}
+function draw(bytes){
+ ctx.fillStyle='#fff';ctx.fillRect(0,0,S,S);ctx.save();ctx.translate(C,C);const v=toValues(bytes);
+ // Large circular field: locator is an asymmetric broken outer ring + three satellite dots, not QR corners.
+ ctx.strokeStyle='#0d0d0d';ctx.fillStyle='#0d0d0d';ctx.lineCap='round';
+ ctx.lineWidth=26;ctx.beginPath();ctx.arc(0,0,435,-2.45,2.10);ctx.stroke();
+ ctx.lineWidth=10;ctx.beginPath();ctx.arc(0,0,326,-.55,1.05);ctx.stroke();
+ const sats=[[-235,-205,25],[245,-125,31],[155,250,27]];for(const [x,y,r] of sats){ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,r*.42,0,TAU);ctx.fill();ctx.fillStyle='#0d0d0d'}
+ // Direction marker: one thick curved S-like stroke in the center.
+ ctx.lineWidth=18;ctx.beginPath();ctx.arc(0,0,88,-2.7,.2);ctx.arc(0,0,88,.45,3.0);ctx.stroke();
+ // Four rings of optical symbols. Symbol state is encoded by radial distance + a small tangent dash.
+ const radii=[190,260,330,400];for(let r=0;r<RINGS;r++)for(let i=0;i<SYMS;i++){const val=v[r*SYMS+i],ang=-Math.PI/2+i*TAU/SYMS,rr=radii[r]+(val-1.5)*18,x=Math.cos(ang)*rr,y=Math.sin(ang)*rr;ctx.beginPath();ctx.arc(x,y,7.2,0,TAU);ctx.fill();if(val===1||val===3){ctx.save();ctx.translate(x,y);ctx.rotate(ang);ctx.fillRect(-2.2,-13,4.4,7);ctx.restore()}}
+ // four larger calibration marks at non-corner positions, each different length
+ [[0,-405,26],[372,125,19],[-350,185,34],[95,395,15]].forEach(([x,y,r])=>{ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,r*.35,0,TAU);ctx.fill();ctx.fillStyle='#0d0d0d'});
+ ctx.restore();
+}
+$('generate').onclick=async()=>{try{packet=await makePacket(JSON.parse($('payload').value));draw(packet);$('genStatus').innerHTML='<span class="ok">Generated · 64-byte packet · 512 optical bits · CRC + auth</span>'}catch(e){$('genStatus').innerHTML='<span class="bad">'+e.message+'</span>'}};
+$('selftest').onclick=async()=>{const b=$('selftest');b.disabled=true;$('genStatus').textContent='Running 1000× round-trip tests…';let n=0;try{for(let i=0;i<1000;i++){const p=await makePacket({amount:(i*7919)%999999,currency:'INR',merchant:'M'+i,invoice:'I'+i});const q=fromValues(toValues(p));const o=await verify(q);if(o.amount!==((i*7919)%999999)||o.merchant!=='M'+i||o.invoice!=='I'+i)throw Error('field mismatch');n++}$('genStatus').innerHTML='<span class="ok">SELF-TEST PASS · 1000/1000</span>'}catch(e){$('genStatus').innerHTML='<span class="bad">SELF-TEST FAIL at '+n+' · '+e.message+'</span>'}b.disabled=false};
+function setStatus(t,ok=false){$('scanStatus').innerHTML=ok?'<span class="ok">'+t+'</span>':t}
+async function start(){if(stream)return;if(!navigator.mediaDevices?.getUserMedia){setStatus('Camera API unavailable · use HTTPS/GitHub Pages');return}try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:false});video.srcObject=stream;await video.play();overlay.width=video.videoWidth||640;overlay.height=video.videoHeight||480;$('start').disabled=true;$('stop').disabled=false;frames=hits=decoded=0;$('frames').textContent=$('hits').textContent=$('decoded').textContent='0';lastFrame=performance.now();fpsCount=0;scan()}catch(e){setStatus('Camera error: '+e.message)}}
+function stop(){if(raf)cancelAnimationFrame(raf);raf=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped.')}
+$('start').onclick=start;$('stop').onclick=stop;$('flip').onclick=async()=>{facing=facing==='environment'?'user':'environment';if(stream){stop();await start()}};
+// Decoder assumes the user centers the circular field. It tests several centers/scales and chooses the candidate with the strongest outer ring.
+function sampleGray(d,W,H,x,y){if(x<0||y<0||x>=W||y>=H)return 255;const i=(y*W+x)*4;return (d[i]+d[i+1]+d[i+2])/3}
+function candidate(im,W,H,cx,cy,R){const d=im.data,radii=[190/435,260/435,330/435,400/435],off=18/435;let score=0;const vals=[];for(let r=0;r<RINGS;r++)for(let k=0;k<SYMS;k++){const a=-Math.PI/2+k*TAU/SYMS;let bestVal=0,best=-1e9;for(let val=0;val<4;val++){const rr=R*(radii[r]+(val-1.5)*off);let q=0;for(let da=-.006;da<=.006;da+=.006)for(let dr=-.003;dr<=.003;dr+=.003)q+=255-sampleGray(d,W,H,cx+Math.cos(a+da)*rr*(1+dr),cy+Math.sin(a+da)*rr*(1+dr));if(q>best){best=q;bestVal=val}}vals.push(bestVal);score+=best}for(const ang of [-2.0,-1.4,-.8,0,.8,1.6])score+=(255-sampleGray(d,W,H,cx+Math.cos(ang)*R*.98,cy+Math.sin(ang)*R*.98))*2;return{score,bytes:fromValues(vals),values:vals,cx,cy,R}}
+function rotatedBytes(values,shift){const v=[];for(let r=0;r<RINGS;r++)for(let i=0;i<SYMS;i++)v.push(values[r*SYMS+((i+shift)%SYMS)]);return fromValues(v)}
+function analyze(){if(!video.videoWidth)return null;const W=360,H=Math.round(360*video.videoHeight/video.videoWidth);work.width=W;work.height=H;wctx.drawImage(video,0,0,W,H);const im=wctx.getImageData(0,0,W,H);let best=null;const base=Math.min(W,H)*.43;for(let oy=-.08;oy<=.08;oy+=.08)for(let ox=-.08;ox<=.08;ox+=.08)for(const sf of [.94,1,1.06]){const c=candidate(im,W,H,W/2+W*ox,H/2+H*oy,base*sf);if(!best||c.score>best.score)best=c}return best}
+async function scan(){if(!stream)return;frames++;$('frames').textContent=frames;const now=performance.now();fpsCount++;if(now-lastFrame>1000){$('fps').textContent=fpsCount;fpsCount=0;lastFrame=now}const a=analyze();if(a){hits++;$('hits').textContent=hits;const sx=overlay.width/work.width,sy=overlay.height/work.height;octx.clearRect(0,0,overlay.width,overlay.height);octx.strokeStyle='#fff';octx.lineWidth=3;octx.beginPath();octx.arc(a.cx*sx,a.cy*sy,a.R*sx,0,TAU);octx.stroke();if(now-last>180){last=now;let ok=null;for(let sh=0;sh<SYMS;sh++){try{ok=await verify(rotatedBytes(a.values,sh));break}catch(e){}}if(ok){decoded++;$('decoded').textContent=decoded;$('result').style.display='block';$('result').innerHTML='<b>Decoded transaction</b>Amount: '+ok.currency+' '+ok.amount+'<br>Merchant: '+ok.merchant+'<br>Invoice: '+ok.invoice+'<br>Packet: '+ok.nonce;setStatus('SUCCESS · authenticated transaction decoded',true)}else setStatus('FIELD FOUND · validating packet…')}}else{octx.clearRect(0,0,overlay.width,overlay.height);setStatus('SEARCHING · center the Pulse field in the camera view')}raf=requestAnimationFrame(scan)}
+(async()=>{await $('generate').onclick();})();
+</script></body></html>
