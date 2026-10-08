@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000">
+<title>Spendly VTP v0.6</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090909;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{max-width:1000px;margin:auto;padding:26px 16px 8px;display:flex;justify-content:space-between}.eyebrow{font-size:10px;letter-spacing:2px;color:#888}.title{font-size:36px;font-weight:800;margin:4px 0}.sub{font-size:13px;color:#999}.badge{font-size:10px;color:#aaa;border:1px solid #444;border-radius:999px;padding:7px 10px;height:max-content}
+main{max-width:1000px;margin:auto;padding:0 12px 30px}.card{background:#111;border:1px solid #252525;border-radius:18px;padding:18px;margin:12px 0}h2{font-size:18px;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}label{font-size:11px;color:#999}input{width:100%;margin-top:5px;padding:12px;background:#070707;color:#fff;border:1px solid #333;border-radius:10px;font-size:15px}
+button{border:0;border-radius:10px;background:#fff;color:#000;padding:12px 16px;font-weight:700;margin-top:12px;cursor:pointer}button.secondary{background:#252525;color:#fff}button:disabled{opacity:.45}
+.status{font-size:12px;color:#aaa;margin-top:10px}.ok{color:#9ff0b0}.err{color:#ff8888}
+.stage{background:#fff;border-radius:14px;padding:20px;display:flex;justify-content:center}.stage canvas{width:min(100%,600px);height:auto;image-rendering:pixelated}
+.scanner{position:relative;background:#000;border-radius:14px;overflow:hidden}.scanner video{width:100%;display:block;min-height:280px;object-fit:cover}.guide{position:absolute;inset:7%;border:2px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px #0005;pointer-events:none}.scanbadge{position:absolute;left:12px;top:12px;background:#000c;border-radius:999px;padding:7px 10px;font-size:10px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.metric{background:#080808;border:1px solid #292929;border-radius:10px;padding:9px}.metric span{display:block;font-size:9px;color:#777;text-transform:uppercase}.metric b{display:block;margin-top:4px;font-size:13px}
+pre{background:#080808;border:1px solid #292929;border-radius:10px;padding:12px;min-height:70px;white-space:pre-wrap;overflow:auto;font-size:12px}.note{font-size:12px;color:#888;line-height:1.5}
+@media(max-width:650px){.grid,.metrics{grid-template-columns:1fr 1fr}.title{font-size:32px}}
+</style>
+</head>
+<body>
+<header><div><div class="eyebrow">SPENDLY LAB</div><div class="title">VTP v0.6</div><div class="sub">Reliable transport prototype</div></div><div class="badge">RESEARCH</div></header>
+<main>
+<section class="card">
+<h2>1. Generate VTP</h2>
+<div class="grid">
+<label>Shop ID<input id="shop" value="SHOP-001"></label>
+<label>Invoice ID<input id="invoice" value="INV-1001"></label>
+<label>Total INR<input id="amount" type="number" value="1250"></label>
+<label>Note<input id="note" value="TEST"></label>
+</div>
+<button id="gen">Generate VTP</button>
+<button id="self" class="secondary">Run encoder/decoder self-test</button>
+<div id="genStatus" class="status">Loading...</div>
+</section>
+
+<section class="card">
+<h2>2. VTP code</h2>
+<div class="stage"><canvas id="vtp" width="720" height="720"></canvas></div>
+<div id="capacity" class="status"></div>
+</section>
+
+<section class="card">
+<h2>3. Automatic scanner</h2>
+<div class="scanner"><video id="video" playsinline muted autoplay></video><div class="guide"></div><div id="scanBadge" class="scanbadge">CAMERA OFF</div></div>
+<button id="start">Start automatic scan</button><button id="stop" class="secondary" disabled>Stop</button>
+<div id="cameraStatus" class="status">Start once. The scanner then runs continuously.</div>
+<div class="metrics">
+<div class="metric"><span>State</span><b id="state">OFF</b></div>
+<div class="metric"><span>Frames</span><b id="frames">0</b></div>
+<div class="metric"><span>Decode</span><b id="decode">—</b></div>
+<div class="metric"><span>Result</span><b id="resultState">WAITING</b></div>
+</div>
+<pre id="result">No transaction decoded yet.</pre>
+</section>
+
+<section class="card"><h2>4. First test</h2><div class="note">First press “Run encoder/decoder self-test”. It must say PASS. Then display this VTP on another screen and start the automatic scanner at 15–30 cm.</div></section>
+</main>
+
+<script>
+(function(){
+"use strict";
+const N=40,SIZE=720,canvas=document.getElementById("vtp"),ctx=canvas.getContext("2d");
+const video=document.getElementById("video"),enc=new TextEncoder(),dec=new TextDecoder();
+let stream=null,running=false,raf=0,busy=false,frames=0,lastSuccess=0;
+
+function bytes(s){return enc.encode(s)}function text(b){return dec.decode(b)}
+function crc32(a){let c=0xffffffff;for(const x of a){c^=x;for(let i=0;i<8;i++)c=(c>>>1)^(0xedb88320&-(c&1));}return(c^0xffffffff)>>>0}
+function reserved(r,c){return(r<7&&c<7)||(r<7&&c>=N-7)||(r>=N-7&&c<7)}
+function finder(x,y){ctx.fillStyle="#000";ctx.fillRect(x,y,7,7);ctx.fillStyle="#fff";ctx.fillRect(x+1,y+1,5,5);ctx.fillStyle="#000";ctx.fillRect(x+2,y+2,3,3)}
+function makePacket(){
+ const obj={p:"SVT",v:6,t:"B",s:document.getElementById("shop").value.trim(),i:document.getElementById("invoice").value.trim(),a:Number(document.getElementById("amount").value||0),c:"INR",n:document.getElementById("note").value};
+ const d=bytes(JSON.stringify(obj)),out=new Uint8Array(12+d.length);out.set([83,86,84,80,6,1],0);out[6]=(d.length>>>8)&255;out[7]=d.length&255;const c=crc32(d);out[8]=c>>>24;out[9]=c>>>16;out[10]=c>>>8;out[11]=c;out.set(d,12);return{obj,data:d,packet:out}
+}
+function draw(){
+ const p=makePacket().packet,cell=SIZE/N;ctx.fillStyle="#fff";ctx.fillRect(0,0,SIZE,SIZE);
+ // Quiet zone + strong outer border
+ ctx.strokeStyle="#000";ctx.lineWidth=6;ctx.strokeRect(3,3,SIZE-6,SIZE-6);
+ finder(0,0);finder(N-7,0);finder(0,N-7);
+ const bits=[];for(const b of p)for(let i=7;i>=0;i--)bits.push((b>>i)&1);let k=0;
+ for(let r=0;r<N;r++)for(let c=0;c<N;c++){if(reserved(r,c)||k>=bits.length)continue;ctx.fillStyle=bits[k++]?"#000":"#fff";ctx.fillRect(c*cell,r*cell,cell+.2,cell+.2)}
+ const cap=Math.floor((N*N-147)/8);
+ document.getElementById("genStatus").textContent="VTP generated • "+p.length+" bytes";
+ document.getElementById("capacity").textContent=`Payload ${p.length} bytes • Capacity ${cap} bytes • ${p.length<=cap?"OK":"TOO LARGE"}`;
+}
+function sampleDecode(image,Nx,box,sx,sy){
+ const cell=box/Nx,img=image.data,w=image.w,h=image.h;
+ const gray=(x,y)=>{x=Math.max(0,Math.min(w-1,Math.round(x)));y=Math.max(0,Math.min(h-1,Math.round(y)));const p=(y*w+x)*4;return .299*img[p]+.587*img[p+1]+.114*img[p+2]};
+ const bit=(r,c)=>{let s=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)s+=gray(sx+(c+.5)*cell+dx,sy+(r+.5)*cell+dy);return s/9<128?1:0};
+ const anchor=(x,y)=>{for(let r=0;r<7;r++)for(let c=0;c<7;c++){const e=(r===0||r===6||c===0||c===6||(r>=2&&r<=4&&c>=2&&c<=4))?1:0;if(bit(y+r,x+c)!==e)return false}return true};
+ if(!anchor(0,0)||!anchor(Nx-7,0)||!anchor(0,Nx-7))return null;
+ const bs=[];for(let r=0;r<Nx;r++)for(let c=0;c<Nx;c++)if(!reserved(r,c))bs.push(bit(r,c));
+ const out=[];for(let i=0;i+7<bs.length;i+=8){let b=0;for(let j=0;j<8;j++)b=(b<<1)|bs[i+j];out.push(b)}
+ const b=new Uint8Array(out);if(b[0]!==83||b[1]!==86||b[2]!==84||b[3]!==80||b[4]!==6)return null;
+ const len=(b[6]<<8)|b[7];if(len<1||len>b.length-12)return null;const d=b.slice(12,12+len),stored=((b[8]<<24)|(b[9]<<16)|(b[10]<<8)|b[11])>>>0;if(crc32(d)!==stored)return null;
+ return JSON.parse(text(d));
+}
+function decodeCanvasExact(){
+ const img=ctx.getImageData(0,0,SIZE,SIZE);return sampleDecode({data:img.data,w:SIZE,h:SIZE},N,SIZE,0,0)
+}
+function selfTest(){
+ try{const expected=makePacket().obj,got=decodeCanvasExact();if(!got)throw new Error("decoder could not read its own generated VTP");document.getElementById("genStatus").textContent="SELF-TEST PASS • encoder and decoder agree";document.getElementById("genStatus").className="status ok"}catch(e){document.getElementById("genStatus").textContent="SELF-TEST FAIL • "+e.message;document.getElementById("genStatus").className="status err"}
+}
+function scan(){
+ if(!running||busy||video.readyState<2)return;busy=true;frames++;document.getElementById("frames").textContent=frames;
+ const w=video.videoWidth,h=video.videoHeight,side=Math.floor(Math.min(w,h)*.94);if(!w||!h){busy=false;return}
+ const c=document.createElement("canvas");c.width=side;c.height=side;const ic=c.getContext("2d",{willReadFrequently:true});ic.drawImage(video,(w-side)/2,(h-side)/2,side,side,0,0,side,side);
+ const image={data:ic.getImageData(0,0,side,side).data,w:side,h:side},t=performance.now();let found=null;
+ // v0.6 uses larger cells and more candidate positions.
+ for(const scale of [.50,.55,.60,.65,.70,.75,.80,.85,.90]){
+  if(found)break;const box=side*scale,range=side-box;
+  for(let yy=0;yy<=2;yy++){for(let xx=0;xx<=2;xx++){try{found=sampleDecode(image,N,box,range*xx/2,range*yy/2)}catch(e){}if(found)break}if(found)break}
+ }
+ const ms=performance.now()-t;
+ if(found&&Date.now()-lastSuccess>700){lastSuccess=Date.now();document.getElementById("state").textContent="DECODED";document.getElementById("resultState").textContent="SUCCESS";document.getElementById("decode").textContent=ms.toFixed(1)+" ms";document.getElementById("result").textContent=JSON.stringify(found,null,2)}
+ else if(!found&&Date.now()-lastSuccess>900){document.getElementById("state").textContent="SEARCHING"}
+ busy=false;
+}
+function loop(){if(!running)return;scan();raf=requestAnimationFrame(loop)}
+async function start(){if(running)return;try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Camera API unavailable");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});video.srcObject=stream;await video.play();running=true;frames=0;document.getElementById("start").disabled=true;document.getElementById("stop").disabled=false;document.getElementById("state").textContent="SEARCHING";document.getElementById("scanBadge").textContent="AUTO SCAN ON";document.getElementById("cameraStatus").textContent="Camera active • continuously scanning";loop()}catch(e){document.getElementById("state").textContent="ERROR";document.getElementById("cameraStatus").textContent="Camera error: "+e.name+" — "+e.message}}
+function stop(){running=false;cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;document.getElementById("start").disabled=false;document.getElementById("stop").disabled=true;document.getElementById("state").textContent="OFF";document.getElementById("scanBadge").textContent="CAMERA OFF"}
+document.getElementById("gen").onclick=draw;document.getElementById("self").onclick=selfTest;document.getElementById("start").onclick=start;document.getElementById("stop").onclick=stop;window.addEventListener("beforeunload",stop);draw();
+})();
+</script>
+</body>
+</html>
