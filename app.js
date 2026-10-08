@@ -8,7 +8,7 @@ const fromUtf8=a=>new TextDecoder().decode(a);
 function crc32(bytes){let c=0xffffffff;for(const b of bytes){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^(0xedb88320&-(c&1))}return(c^0xffffffff)>>>0}
 async function key(secret){const b=await crypto.subtle.importKey("raw",utf8(secret),"PBKDF2",false,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",salt:utf8("SPENDLY-VTP-V0-2"),iterations:100000,hash:"SHA-256"},b,{name:"AES-GCM",length:256},false,["encrypt","decrypt"])}
 async function encrypt(t){const k=await key("SPENDLY-VTP-DEMO-KEY");const iv=crypto.getRandomValues(new Uint8Array(12));const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},k,utf8(t)));return new Uint8Array([...iv,...ct])}
-async function decrypt(a){const k=await key("SPENDLY-VTP-DEMO-KEY");return fromUtf8(new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:a.slice(0,12)},k,a.slice(12)))}
+async function decrypt(a){const k=await key("SPENDLY-VTP-DEMO-KEY");return fromUtf8(new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:a.slice(0,12)},k,a.slice(12))))}
 
 function bits(bytes){const out=[];for(const b of bytes)for(let i=7;i>=0;i--)out.push((b>>i)&1);return out}
 function anchor(x,y,s){ctx.fillStyle="#000";ctx.fillRect(x,y,s,s);ctx.fillStyle="#fff";ctx.fillRect(x+s*.18,y+s*.18,s*.64,s*.64);ctx.fillStyle="#000";ctx.fillRect(x+s*.36,y+s*.36,s*.28,s*.28)}
@@ -23,8 +23,10 @@ for(let r=2;r<N-2;r++)for(let c2=2;c2<N-2;c2++){if(reserved(r,c2)||i>=bs.length)
 }
 
 async function generate(){
+try{
 const obj={protocol:"VTP",version:1,type:"BILL",shopId:$("shopId").value,invoiceId:$("invoiceId").value,total:Number($("total").value||0),currency:"INR",note:$("note").value,createdAt:new Date().toISOString()};
-const raw=utf8(JSON.stringify(obj)),enc=await encrypt(JSON.stringify(obj)),p=new Uint8Array(enc.length+4);p.set(enc);const c=crc32(raw);p[p.length-4]=c>>>24;p[p.length-3]=c>>>16;p[p.length-2]=c>>>8;p[p.length-1]=c;render(p);$("status").textContent=`Generated VTP packet: ${p.length} bytes.`}
+const raw=utf8(JSON.stringify(obj)),enc=await encrypt(JSON.stringify(obj)),p=new Uint8Array(enc.length+4);p.set(enc);const c=crc32(raw);p[p.length-4]=c>>>24;p[p.length-3]=c>>>16;p[p.length-2]=c>>>8;p[p.length-1]=c;render(p);$("status").textContent=`Generated VTP packet: ${p.length} bytes.`;
+}catch(e){console.error(e);$("status").textContent="Generate failed: "+e.message}}
 function sample(){
 const w=scanCanvas.width,h=scanCanvas.height,side=Math.min(w,h)*.8,ox=(w-side)/2,oy=(h-side)/2,cell=side/N,img=scanCtx.getImageData(ox,oy,Math.floor(side),Math.floor(side)).data;
 const g=(r,g,b)=>.299*r+.587*g+.114*b;const bit=(r,c)=>{const x=Math.floor((c+.5)*cell),y=Math.floor((r+.5)*cell);let s=0,n=0;for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){const xx=Math.max(0,Math.min(Math.floor(side)-1,x+dx)),yy=Math.max(0,Math.min(Math.floor(side)-1,y+dy)),p=(yy*Math.floor(side)+xx)*4;s+=g(img[p],img[p+1],img[p+2]);n++}return s/n<128?1:0};
