@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Spendly VTP — Research Prototype</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090909;color:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header,main{max-width:1000px;margin:auto}header{padding:28px 16px 12px;display:flex;justify-content:space-between;gap:12px}
+.eyebrow{font-size:10px;letter-spacing:2px;color:#777}.title{font-size:36px;font-weight:800;letter-spacing:-1.5px;margin:4px 0}.sub{font-size:13px;color:#999}.badge{font-size:10px;border:1px solid #444;border-radius:999px;padding:7px 10px;height:max-content;color:#aaa}
+main{padding:0 12px 40px}.card{background:#111;border:1px solid #252525;border-radius:18px;padding:18px;margin:12px 0}
+h2{font-size:18px;margin:0 0 14px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:11px;color:#999}input{display:block;width:100%;margin-top:5px;padding:12px;background:#070707;color:#fff;border:1px solid #333;border-radius:10px;font-size:15px}
+button{border:0;border-radius:10px;background:#fff;color:#000;padding:12px 16px;font-weight:700;margin-top:12px;cursor:pointer}button.secondary{background:#252525;color:#fff}button:disabled{opacity:.4}
+.status{font-size:12px;color:#999;margin-top:10px}.ok{color:#9ee6aa}.bad{color:#ff8888}
+.stage{background:#fff;border-radius:14px;padding:16px;display:flex;justify-content:center}.stage canvas{width:min(100%,620px);height:auto;image-rendering:pixelated}
+.scanner{position:relative;background:#000;border-radius:14px;overflow:hidden}.scanner video{width:100%;min-height:280px;display:block;object-fit:cover}
+.guide{position:absolute;inset:7%;border:2px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px #0005;pointer-events:none}
+.badge2{position:absolute;top:12px;left:12px;background:#000c;border-radius:999px;padding:7px 10px;font-size:10px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.metric{background:#080808;border:1px solid #292929;border-radius:10px;padding:9px}.metric span{display:block;color:#777;font-size:9px;text-transform:uppercase}.metric b{display:block;margin-top:4px;font-size:13px}
+pre{background:#080808;border:1px solid #292929;border-radius:10px;padding:12px;white-space:pre-wrap;min-height:70px;font-size:12px;overflow:auto}.note{font-size:12px;line-height:1.5;color:#888}
+#debug{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media(max-width:650px){.grid,.metrics{grid-template-columns:1fr 1fr}.title{font-size:31px}}
+</style>
+</head>
+<body>
+<header><div><div class="eyebrow">SPENDLY LAB</div><div class="title">VTP</div><div class="sub">Visual Transaction Protocol · v1 research build</div></div><div class="badge">EXPERIMENTAL</div></header>
+<main>
+<section class="card">
+<h2>1. Generate transaction</h2>
+<div class="grid">
+<label>Shop ID<input id="shop" value="SHOP-001"></label>
+<label>Invoice ID<input id="invoice" value="INV-1001"></label>
+<label>Total INR<input id="amount" type="number" value="1250"></label>
+<label>Note<input id="note" value="VTP TEST"></label>
+</div>
+<button id="generate">Generate VTP</button>
+<button id="selfTest" class="secondary">Run self-test</button>
+<div id="genStatus" class="status">Ready.</div>
+</section>
+
+<section class="card">
+<h2>2. VTP visual code</h2>
+<div class="stage"><canvas id="vtp" width="800" height="800"></canvas></div>
+<div id="capacity" class="status"></div>
+</section>
+
+<section class="card">
+<h2>3. Automatic scanner</h2>
+<div class="scanner">
+<video id="video" playsinline muted autoplay></video>
+<div class="guide"></div>
+<div id="scanBadge" class="badge2">CAMERA OFF</div>
+</div>
+<button id="start">Start automatic scan</button>
+<button id="stop" class="secondary" disabled>Stop</button>
+<div id="cameraStatus" class="status">Start once. There is no Capture button.</div>
+<div class="metrics">
+<div class="metric"><span>State</span><b id="state">OFF</b></div>
+<div class="metric"><span>Frames</span><b id="frames">0</b></div>
+<div class="metric"><span>Decode</span><b id="decode">—</b></div>
+<div class="metric"><span>Detection</span><b id="detect">—</b></div>
+</div>
+<pre id="result">No transaction decoded.</pre>
+</section>
+
+<section class="card">
+<h2>4. Debug</h2>
+<pre id="debug">Self-test has not run.</pre>
+<div class="note">First run the self-test. It proves the encoder and decoder agree before camera testing. Then display the VTP on another screen and scan it from 15–30 cm.</div>
+</section>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+const V=1, GRID=48, SIZE=800, QUIET=3;
+const canvas=document.getElementById("vtp"), ctx=canvas.getContext("2d");
+const video=document.getElementById("video");
+const enc=new TextEncoder(), dec=new TextDecoder();
+let packet=null, stream=null, running=false, raf=0, busy=false, frameCount=0, lastSuccess=0;
+
+const $=id=>document.getElementById(id);
+const bytes=s=>enc.encode(s), text=b=>dec.decode(b);
+
+function crc32(a){
+ let c=0xffffffff;
+ for(const x of a){c^=x;for(let i=0;i<8;i++)c=(c>>>1)^(0xedb88320&-(c&1));}
+ return(c^0xffffffff)>>>0;
+}
+
+/* Four custom VTP anchors. They are deliberately not QR finder patterns:
+   outer black square, white ring, black center, with orientation by corner. */
+function anchorCells(r,c){
+ return r<9&&c<9 || r<9&&c>=GRID-9 || r>=GRID-9&&c<9 || r>=GRID-9&&c>=GRID-9;
+}
+function drawAnchor(x,y,flip){
+ const u=SIZE/GRID, s=8*u;
+ ctx.fillStyle="#000";ctx.fillRect(x,y,s,s);
+ ctx.fillStyle="#fff";ctx.fillRect(x+u,y+u,6*u,6*u);
+ ctx.fillStyle="#000";ctx.fillRect(x+2*u,y+2*u,4*u,4*u);
+ ctx.fillStyle="#fff";ctx.fillRect(x+3*u,y+3*u,2*u,2*u);
+ if(flip){ctx.fillStyle="#000";ctx.fillRect(x+3*u,y+5*u,u,u);}
+}
+function buildPacket(){
+ const obj={
+  protocol:"SPENDLY-VTP",
+  version:V,
+  type:"BILL",
+  shopId:$("shop").value.trim(),
+  invoiceId:$("invoice").value.trim(),
+  amount:Number($("amount").value||0),
+  currency:"INR",
+  note:$("note").value
+ };
+ const data=bytes(JSON.stringify(obj));
+ const out=new Uint8Array(14+data.length);
+ out.set([83,86,84,80,V,1],0); // SVTP
+ out[6]=(data.length>>>8)&255; out[7]=data.length&255;
+ const c=crc32(data);
+ out[8]=c>>>24;out[9]=c>>>16;out[10]=c>>>8;out[11]=c;
+ out[12]=0xA7;out[13]=0x31; // protocol marker
+ out.set(data,14);
+ return {obj,data,packet:out};
+}
+function drawVTP(){
+ const built=buildPacket();packet=built.packet;
+ ctx.fillStyle="#fff";ctx.fillRect(0,0,SIZE,SIZE);
+ const u=SIZE/GRID;
+ // quiet zone + thick outer frame
+ ctx.strokeStyle="#000";ctx.lineWidth=2*u;ctx.strokeRect(2*u,2*u,SIZE-4*u,SIZE-4*u);
+ drawAnchor(0,0,false);
+ drawAnchor((GRID-8)*u,0,true);
+ drawAnchor(0,(GRID-8)*u,true);
+ drawAnchor((GRID-8)*u,(GRID-8)*u,false);
+
+ const bits=[];
+ for(const b of packet)for(let i=7;i>=0;i--)bits.push((b>>i)&1);
+ let k=0;
+ for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){
+   if(anchorCells(r,c) || k>=bits.length) continue;
+   ctx.fillStyle=bits[k++]?"#000":"#fff";
+   ctx.fillRect(c*u,r*u,u+.2,u+.2);
+ }
+ const cap=Math.floor((GRID*GRID-4*81)/8);
+ $("capacity").textContent=`Packet ${packet.length} bytes · Capacity ${cap} bytes · ${packet.length<=cap?"OK":"TOO LARGE"}`;
+ $("genStatus").textContent="VTP generated successfully.";
+ $("genStatus").className="status ok";
+}
+
+/* The decoder does NOT guess one crop. It first looks for the four large custom anchors.
+   For v1, anchors are axis-aligned enough that we can robustly search them at multiple scales.
+   Once all four are found, the rectangular frame gives a stable sampling square. */
+
+function graySampler(image){
+ const {data,w,h}=image;
+ return (x,y)=>{
+   x=Math.max(0,Math.min(w-1,Math.round(x)));
+   y=Math.max(0,Math.min(h-1,Math.round(y)));
+   const p=(y*w+x)*4;
+   return .299*data[p]+.587*data[p+1]+.114*data[p+2];
+ };
+}
+function findDarkRuns(image){
+ const gray=graySampler(image), w=image.w,h=image.h;
+ const pts=[];
+ // Downsampled scan for dark 8x8-ish anchor cores. Candidate density is intentionally low.
+ const step=4;
+ for(let y=0;y<h;y+=step){
+   for(let x=0;x<w;x+=step){
+     const a=gray(x,y), b=gray(x+Math.max(4,w/300),y), c=gray(x,y+Math.max(4,h/300));
+     if(a<55 && b<90 && c<90) pts.push([x,y]);
+   }
+ }
+ return pts;
+}
+function decodeRect(image,x0,y0,side){
+ const u=side/GRID, gray=graySampler(image);
+ function sample(r,c){
+   let sum=0,n=0;
+   const cx=x0+(c+.5)*u,cy=y0+(r+.5)*u;
+   const rad=Math.max(1,Math.floor(u*.18));
+   for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++){sum+=gray(cx+dx,cy+dy);n++;}
+   return sum/n<128?1:0;
+ }
+ function anchor(r0,c0){
+   // Check outer, ring and center structure.
+   for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+     const outer=r===0||r===7||c===0||c===7;
+     const blackCore=r>=2&&r<=5&&c>=2&&c<=5;
+     const whiteCenter=r>=3&&r<=4&&c>=3&&c<=4;
+     const expected=(outer||blackCore)&&!whiteCenter?1:0;
+     if(sample(r0+r,c0+c)!==expected)return false;
+   }
+   return true;
+ }
+ if(!anchor(0,0)||!anchor(0,GRID-8)||!anchor(GRID-8,0)||!anchor(GRID-8,GRID-8)) return null;
+ const bits=[];
+ for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++)if(!anchorCells(r,c))bits.push(sample(r,c));
+ const out=new Uint8Array(Math.floor(bits.length/8));
+ for(let i=0;i<out.length;i++){let b=0;for(let j=0;j<8;j++)b=(b<<1)|bits[i*8+j];out[i]=b;}
+ if(out[0]!==83||out[1]!==86||out[2]!==84||out[3]!==80||out[4]!==V)return null;
+ const len=(out[6]<<8)|out[7];
+ if(len<1||len>out.length-14)return null;
+ const data=out.slice(14,14+len);
+ const stored=((out[8]<<24)|(out[9]<<16)|(out[10]<<8)|out[11])>>>0;
+ if(crc32(data)!==stored)return null;
+ if(out[12]!==0xA7||out[13]!==0x31)return null;
+ return JSON.parse(text(data));
+}
+function selfTest(){
+ try{
+   drawVTP();
+   const img=ctx.getImageData(0,0,SIZE,SIZE);
+   const got=decodeRect({data:img.data,w:SIZE,h:SIZE},0,0,SIZE);
+   if(!got) throw new Error("Generated VTP could not be decoded.");
+   $("genStatus").textContent="SELF-TEST PASS";
+   $("genStatus").className="status ok";
+   $("debug").textContent="Encoder → bitmap → decoder: PASS\\nProtocol: SVTP v1\\nPacket: "+packet.length+" bytes\\nDecoded invoice: "+got.invoiceId+"\\nDecoded amount: ₹"+got.amount;
+ }catch(e){
+   $("genStatus").textContent="SELF-TEST FAIL";
+   $("genStatus").className="status bad";
+   $("debug").textContent="SELF-TEST FAIL\\n"+e.message;
+ }
+}
+
+/* Practical camera decoder.
+   It uses the distinctive four-corner anchors and tries candidate squares.
+   This is intentionally conservative: false positives are worse than SEARCHING. */
+function cameraDecode(){
+ const w=video.videoWidth,h=video.videoHeight;
+ if(!w||!h)return null;
+ const scale=Math.min(1,720/Math.max(w,h)),cw=Math.max(1,Math.floor(w*scale)),ch=Math.max(1,Math.floor(h*scale));
+ const c=document.createElement("canvas");c.width=cw;c.height=ch;
+ const ic=c.getContext("2d",{willReadFrequently:true});ic.drawImage(video,0,0,cw,ch);
+ const image={data:ic.getImageData(0,0,cw,ch).data,w:cw,h:ch};
+ // Candidate square sizes and positions. The VTP has a thick outer frame and four anchors.
+ const sizes=[];
+ for(let f=.35;f<=.90;f+=.05)sizes.push(Math.floor(Math.min(cw,ch)*f));
+ for(const side of sizes){
+   const maxX=cw-side,maxY=ch-side;
+   const xs=[0,maxX/2,maxX],ys=[0,maxY/2,maxY];
+   for(const y of ys)for(const x of xs){
+     const result=decodeRect(image,x,y,side);
+     if(result)return {result,side};
+   }
+ }
+ return null;
+}
+function scan(){
+ if(!running||busy||video.readyState<2)return;
+ busy=true;frameCount++;$("frames").textContent=frameCount;
+ const t=performance.now();
+ try{
+   const hit=cameraDecode();
+   if(hit&&Date.now()-lastSuccess>700){
+     lastSuccess=Date.now();
+     $("state").textContent="DECODED";$("result").textContent=JSON.stringify(hit.result,null,2);
+     $("decode").textContent=(performance.now()-t).toFixed(1)+" ms";$("detect").textContent=hit.side+" px";$("cameraStatus").textContent="VTP detected and verified.";
+   }else if(!hit&&Date.now()-lastSuccess>900){
+     $("state").textContent="SEARCHING";
+   }
+ }catch(e){$("debug").textContent="Camera decode error: "+e.message;}
+ busy=false;
+}
+function loop(){if(!running)return;scan();raf=requestAnimationFrame(loop);}
+async function start(){
+ if(running)return;
+ try{
+   if(!navigator.mediaDevices?.getUserMedia)throw new Error("Camera API unavailable. Open the HTTPS GitHub Pages URL.");
+   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
+   video.srcObject=stream;await video.play();running=true;frameCount=0;
+   $("start").disabled=true;$("stop").disabled=false;$("state").textContent="SEARCHING";$("scanBadge").textContent="AUTO SCAN ON";
+   $("cameraStatus").textContent="Camera active · searching for VTP anchors";
+   loop();
+ }catch(e){$("state").textContent="ERROR";$("cameraStatus").textContent="Camera error: "+e.name+" · "+e.message;}
+}
+function stop(){
+ running=false;cancelAnimationFrame(raf);
+ if(stream)stream.getTracks().forEach(t=>t.stop());
+ stream=null;video.srcObject=null;$("start").disabled=false;$("stop").disabled=true;
+ $("state").textContent="OFF";$("scanBadge").textContent="CAMERA OFF";
+}
+$("generate").onclick=drawVTP;$("selfTest").onclick=selfTest;$("start").onclick=start;$("stop").onclick=stop;
+window.addEventListener("beforeunload",stop);
+drawVTP();
+})();
+</script>
+</body>
+</html>
