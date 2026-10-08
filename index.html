@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000">
+<title>Spendly VTP v0.4</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090909;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{max-width:1000px;margin:auto;padding:28px 16px 10px;display:flex;justify-content:space-between;gap:10px}
+.eyebrow{font-size:10px;letter-spacing:2px;color:#888}.title{font-size:38px;font-weight:800;letter-spacing:-1.5px;margin:4px 0}.sub{color:#999;font-size:13px}.badge{border:1px solid #444;border-radius:999px;height:max-content;padding:7px 10px;font-size:10px;color:#aaa}
+main{max-width:1000px;margin:auto;padding:0 12px 30px}.card{background:#111;border:1px solid #252525;border-radius:18px;padding:18px;margin:12px 0}
+h2{font-size:18px;margin:0 0 14px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}label{font-size:11px;color:#999}input{width:100%;margin-top:5px;padding:12px;background:#070707;color:#fff;border:1px solid #333;border-radius:10px;font-size:15px}
+button{border:0;border-radius:10px;background:#fff;color:#000;padding:12px 16px;font-weight:700;margin-top:12px;cursor:pointer}button:disabled{opacity:.45}button.secondary{background:#252525;color:#fff}
+.status{font-size:12px;color:#aaa;margin-top:10px}.error{color:#ff8a8a}
+.stage{background:#fff;border-radius:14px;padding:10px;display:flex;justify-content:center;align-items:center;min-height:260px}
+#vtp{width:min(100%,620px);height:auto;display:block;image-rendering:pixelated}
+.scanner{position:relative;background:#000;border-radius:14px;overflow:hidden;min-height:280px}
+video{width:100%;height:auto;min-height:280px;display:block;object-fit:cover}
+.guide{position:absolute;left:8%;right:8%;top:7%;bottom:7%;border:2px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px #0005;pointer-events:none}
+.scanbadge{position:absolute;top:12px;left:12px;padding:7px 10px;background:#000c;border-radius:999px;font-size:10px;letter-spacing:.5px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.metric{background:#080808;border:1px solid #292929;border-radius:10px;padding:9px}.metric span{display:block;font-size:9px;color:#777;text-transform:uppercase}.metric b{display:block;font-size:13px;margin-top:4px}
+pre{white-space:pre-wrap;background:#080808;border:1px solid #292929;border-radius:10px;padding:12px;min-height:70px;overflow:auto;font-size:12px}
+.note{font-size:12px;color:#888;line-height:1.5}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.title{font-size:32px}}
+</style>
+</head>
+<body>
+<header>
+<div><div class="eyebrow">SPENDLY LAB</div><div class="title">VTP v0.4</div><div class="sub">Adaptive automatic visual decoder</div></div>
+<div class="badge">RESEARCH</div>
+</header>
+<main>
+<section class="card">
+<h2>1. Generate VTP</h2>
+<div class="grid">
+<label>Shop ID<input id="shop" value="SHOP-001"></label>
+<label>Invoice ID<input id="invoice" value="INV-1001"></label>
+<label>Total INR<input id="amount" type="number" value="1250"></label>
+<label>Note<input id="note" value="VTP adaptive test"></label>
+</div>
+<button id="gen">Generate VTP</button>
+<div id="genStatus" class="status">VTP is generated automatically on page load.</div>
+</section>
+
+<section class="card">
+<h2>2. VTP code</h2>
+<div class="stage"><canvas id="vtp" width="600" height="600"></canvas></div>
+<div class="status">Display this on another screen. The scanner now searches different sizes and positions automatically.</div>
+</section>
+
+<section class="card">
+<h2>3. Automatic scanner</h2>
+<div class="scanner">
+<video id="video" playsinline muted autoplay></video>
+<div class="guide"></div>
+<div id="scanBadge" class="scanbadge">CAMERA OFF</div>
+</div>
+<button id="start">Start automatic scan</button>
+<button id="stop" class="secondary" disabled>Stop</button>
+<div id="cameraStatus" class="status">Press Start once. Scanning is automatic.</div>
+<div class="metrics">
+<div class="metric"><span>State</span><b id="state">OFF</b></div>
+<div class="metric"><span>Frames</span><b id="frames">0</b></div>
+<div class="metric"><span>Decode</span><b id="decode">—</b></div>
+<div class="metric"><span>Result</span><b id="resultState">WAITING</b></div>
+</div>
+<pre id="result">No transaction decoded yet.</pre>
+</section>
+<section class="card"><h2>4. Test</h2><div class="note">First get one successful decode. Then test 10 cm, 20 cm, 30 cm, 50 cm, 1 m and farther. Also test rotation, low light, bright light and motion.</div></section>
+</main>
+
+<script>
+(function(){
+"use strict";
+const N=40, canvas=document.getElementById("vtp"), ctx=canvas.getContext("2d");
+const video=document.getElementById("video");
+let stream=null,running=false,raf=0,frames=0,lastSuccess=0,busy=false;
+const utf8=s=>new TextEncoder().encode(s);
+const bytesText=b=>new TextDecoder().decode(b);
+
+function crc32(a){let c=0xffffffff;for(const x of a){c^=x;for(let i=0;i<8;i++)c=(c>>>1)^(0xedb88320&-(c&1));}return(c^0xffffffff)>>>0;}
+function reserved(r,c){return(r<7&&c<7)||(r<7&&c>=N-7)||(r>=N-7&&c<7);}
+function finder(x,y){
+ ctx.fillStyle="#000";ctx.fillRect(x,y,7,7);
+ ctx.fillStyle="#fff";ctx.fillRect(x+1,y+1,5,5);
+ ctx.fillStyle="#000";ctx.fillRect(x+2,y+2,3,3);
+}
+function makePacket(){
+ const obj={protocol:"SPENDLY-VTP",version:4,type:"BILL",
+ shopId:document.getElementById("shop").value.trim(),
+ invoiceId:document.getElementById("invoice").value.trim(),
+ amount:Number(document.getElementById("amount").value||0),currency:"INR",
+ note:document.getElementById("note").value,createdAt:new Date().toISOString()};
+ const data=utf8(JSON.stringify(obj)), out=new Uint8Array(12+data.length);
+ out.set([83,86,84,80,4,1],0);
+ out[6]=(data.length>>>8)&255;out[7]=data.length&255;
+ const c=crc32(data);out[8]=c>>>24;out[9]=c>>>16;out[10]=c>>>8;out[11]=c;
+ out.set(data,12);return {obj,out};
+}
+function draw(){
+ try{
+  const p=makePacket().out;ctx.fillStyle="#fff";ctx.fillRect(0,0,600,600);
+  const cell=600/N;finder(0,0);finder(N-7,0);finder(0,N-7);
+  const bits=[];for(const b of p)for(let i=7;i>=0;i--)bits.push((b>>i)&1);
+  let k=0;for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+   if(reserved(r,c)||k>=bits.length)continue;
+   ctx.fillStyle=bits[k++]?"#000":"#fff";ctx.fillRect(c*cell,r*cell,cell+.25,cell+.25);
+  }
+  document.getElementById("genStatus").textContent="VTP generated • "+p.length+" bytes";
+ }catch(e){document.getElementById("genStatus").textContent="Generation error: "+e.message;}
+}
+
+/* Adaptive decoder:
+   Instead of assuming one crop, try multiple scales and small x/y offsets.
+   This is deliberately brute-force for v0.4; later we will replace it
+   with true visual anchor localization/homography. */
+function tryDecodeAt(img,side,Nx,offsetX,offsetY){
+ const cell=side/Nx;
+ function grayAt(x,y){
+  x=Math.max(0,Math.min(img.w-1,Math.round(x)));
+  y=Math.max(0,Math.min(img.h-1,Math.round(y)));
+  const p=(y*img.w+x)*4;return .299*img.data[p]+.587*img.data[p+1]+.114*img.data[p+2];
+ }
+ function bit(r,c){
+  let s=0,n=0;const cx=offsetX+(c+.5)*cell,cy=offsetY+(r+.5)*cell;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){s+=grayAt(cx+dx,cy+dy);n++;}
+  return s/n<128?1:0;
+ }
+ function anchor(x0,y0){
+  for(let r=0;r<7;r++)for(let c=0;c<7;c++){
+   const exp=(r===0||r===6||c===0||c===6||(r>=2&&r<=4&&c>=2&&c<=4))?1:0;
+   if(bit(y0+r,x0+c)!==exp)return false;
+  }return true;
+ }
+ if(!anchor(0,0)||!anchor(0,Nx-7)||!anchor(Nx-7,0))return null;
+ const bits=[];for(let r=0;r<Nx;r++)for(let c=0;c<Nx;c++)if(!((r<7&&c<7)||(r<7&&c>=Nx-7)||(r>=Nx-7&&c<7)))bits.push(bit(r,c));
+ const out=[];for(let i=0;i+7<bits.length;i+=8){let b=0;for(let j=0;j<8;j++)b=(b<<1)|bits[i+j];out.push(b);}
+ const b=new Uint8Array(out);
+ if(b[0]!==83||b[1]!==86||b[2]!==84||b[3]!==80||b[4]!==4)return null;
+ const len=(b[6]<<8)|b[7];if(len<1||len>b.length-12)return null;
+ const data=b.slice(12,12+len),stored=((b[8]<<24)|(b[9]<<16)|(b[10]<<8)|b[11])>>>0;
+ if(crc32(data)!==stored)return null;
+ return JSON.parse(bytesText(data));
+}
+
+function scan(){
+ if(!running||busy||video.readyState<2)return;
+ busy=true;frames++;document.getElementById("frames").textContent=frames;
+ const w=video.videoWidth,h=video.videoHeight;if(!w||!h){busy=false;return;}
+ const imgCanvas=document.createElement("canvas");imgCanvas.width=w;imgCanvas.height=h;
+ const ic=imgCanvas.getContext("2d",{willReadFrequently:true});
+ /* Use the central 92% of the camera. */
+ const side=Math.floor(Math.min(w,h)*.92),ox=Math.floor((w-side)/2),oy=Math.floor((h-side)/2);
+ ic.drawImage(video,ox,oy,side,side,0,0,side,side);
+ const image=ic.getImageData(0,0,side,side);
+ const t=performance.now();let found=null;
+ /* Multiple scales; offsets compensate for the code being smaller/larger or not perfectly centered. */
+ for(const scale of [.55,.60,.65,.70,.75,.80,.85,.90]){
+  if(found)break;
+  const box=side*scale, range=(side-box)/2;
+  for(let oy2 of [-.10,0,.10]){
+   for(let ox2 of [-.10,0,.10]){
+    const sx=range+range*ox2, sy=range+range*oy2;
+    try{found=tryDecodeAt({data:image.data,w:side,h:side},box,N,sx,sy);}catch(e){}
+    if(found)break;
+   }
+   if(found)break;
+  }
+ }
+ const elapsed=performance.now()-t;
+ if(found && Date.now()-lastSuccess>700){
+  lastSuccess=Date.now();
+  document.getElementById("state").textContent="DECODED";
+  document.getElementById("resultState").textContent="SUCCESS";
+  document.getElementById("decode").textContent=elapsed.toFixed(1)+" ms";
+  document.getElementById("result").textContent=JSON.stringify(found,null,2);
+ }else if(!found && Date.now()-lastSuccess>900){
+  document.getElementById("state").textContent="SEARCHING";
+  document.getElementById("resultState").textContent="WAITING";
+ }
+ busy=false;
+}
+function loop(){if(!running)return;scan();raf=requestAnimationFrame(loop);}
+async function start(){
+ if(running)return;
+ if(!navigator.mediaDevices?.getUserMedia){document.getElementById("cameraStatus").textContent="Camera API unavailable. Use the HTTPS GitHub Pages URL.";return;}
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
+  video.srcObject=stream;await video.play();running=true;frames=0;
+  document.getElementById("frames").textContent="0";document.getElementById("start").disabled=true;document.getElementById("stop").disabled=false;
+  document.getElementById("state").textContent="SEARCHING";document.getElementById("scanBadge").textContent="ADAPTIVE AUTO SCAN";
+  document.getElementById("cameraStatus").textContent="Camera active • searching size + position automatically";
+  loop();
+ }catch(e){document.getElementById("state").textContent="ERROR";document.getElementById("cameraStatus").textContent="Camera error: "+e.name+" — "+e.message;}
+}
+function stop(){running=false;cancelAnimationFrame(raf);raf=0;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;document.getElementById("start").disabled=false;document.getElementById("stop").disabled=true;document.getElementById("state").textContent="OFF";document.getElementById("scanBadge").textContent="CAMERA OFF";document.getElementById("cameraStatus").textContent="Camera stopped.";}
+document.getElementById("gen").onclick=draw;document.getElementById("start").onclick=start;document.getElementById("stop").onclick=stop;window.addEventListener("beforeunload",stop);draw();
+})();
+</script>
+</body>
+</html>
