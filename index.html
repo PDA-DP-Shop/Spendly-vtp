@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#000">
+<title>Spendly VTP v0.2</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div><div class="eyebrow">SPENDLY LAB</div><h1>VTP v0.2</h1><p>Automatic camera scanning prototype</p></div><span class="badge">TEST BUILD</span></header>
+<main>
+<section class="card">
+<h2>1. Create VTP transaction</h2>
+<div class="grid">
+<label>Shop ID<input id="shopId" value="SHOP-001"></label>
+<label>Invoice ID<input id="invoiceId" value="INV-1001"></label>
+<label>Total (INR)<input id="total" type="number" value="1250"></label>
+<label>Note<input id="note" value="Spendly VTP test"></label>
+</div>
+<button id="generate">Generate VTP</button>
+<div id="status" class="status">Ready.</div>
+</section>
+
+<section class="card"><h2>2. VTP visual code</h2>
+<div class="stage"><canvas id="vtpCanvas" width="720" height="720"></canvas></div>
+<p class="hint">Use this code on another screen or print it. Test at different distances and angles.</p>
+</section>
+
+<section class="card">
+<h2>3. Automatic scanner</h2>
+<div class="scanner-wrap">
+<video id="video" playsinline muted></video><div class="guide"></div>
+<div id="scanIndicator" class="indicator">SCANNER OFF</div>
+</div>
+<div class="actions">
+<button id="startCamera">Start automatic scan</button>
+<button id="stopCamera" class="secondary" disabled>Stop</button>
+</div>
+<div class="metrics">
+<div><span>State</span><b id="scanState">OFF</b></div>
+<div><span>Attempts</span><b id="attempts">0</b></div>
+<div><span>Last scan</span><b id="scanTime">—</b></div>
+<div><span>Distance</span><b>Measure manually</b></div>
+</div>
+<div id="decodeStatus" class="status">Press Start automatic scan. No Capture button is required.</div>
+<pre id="result" class="result">No decoded transaction yet.</pre>
+<canvas id="scanCanvas" hidden></canvas>
+</section>
+
+<section class="card"><h2>4. Testing</h2>
+<p>Record distance and successful decode time. Try bright light, low light, slight rotation, motion, and partial obstruction. This prototype is for research only.</p></section>
+</main><footer>Spendly VTP v0.2 · Experimental · Not for real payments</footer>
+<script src="app.js"></script>
+</body></html>
