@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#07090d"><title>Spendly FullScreen Link V1</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#07090d;color:#f5f7fb;font-family:system-ui,-apple-system,sans-serif}body{overflow:hidden}button,input,textarea{font:inherit}button{border:1px solid #3a4658;background:#171e29;color:#f6f7fa;border-radius:12px;padding:11px 14px;font-weight:700}button.primary{background:#d8f36a;color:#101309;border-color:#d8f36a}.hidden{display:none!important}
+#app{height:100dvh;display:flex;flex-direction:column}.top{padding:12px 15px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#0d1119;border-bottom:1px solid #242d3b;flex:none}.brand{font-size:12px;letter-spacing:.16em;color:#d8f36a;font-weight:850}.mode{font-size:12px;color:#aeb8c8}.controls{padding:14px;overflow:auto;flex:1}.panel{background:#121823;border:1px solid #2a3444;border-radius:16px;padding:15px;margin-bottom:12px}.muted{color:#aeb8c8;font-size:14px;line-height:1.45}label{display:block;font-size:13px;color:#c8d0dc;margin:10px 0 5px}input,textarea{width:100%;border:1px solid #39465b;border-radius:10px;background:#090e16;color:white;padding:11px}textarea{min-height:74px}.buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.buttons button{flex:1}
+#codeView{position:fixed;inset:0;background:#050608;z-index:5;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch}
+#matrix{width:100%;height:100%;display:block;image-rendering:pixelated;touch-action:none}
+#overlay{position:absolute;left:0;right:0;top:0;padding:env(safe-area-inset-top,8px) 12px 8px;display:flex;justify-content:space-between;align-items:center;color:rgba(255,255,255,.75);font-size:11px;letter-spacing:.12em;text-shadow:0 1px 3px #000;pointer-events:none}
+#codeActions{position:absolute;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:8px;background:linear-gradient(transparent,rgba(0,0,0,.72));}
+#codeActions button{background:rgba(18,24,35,.9);backdrop-filter:blur(8px)}#codeActions .primary{background:#d8f36a}
+#readerView{position:fixed;inset:0;background:#050608;z-index:6;display:flex;flex-direction:column}
+#videoWrap{position:relative;flex:1;min-height:0;display:grid;place-items:center;background:#000}#video{width:100%;height:100%;object-fit:contain}#scanCanvas{display:none}
+#readerPanel{background:#101620;padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid #293344;max-height:43%;overflow:auto}
+#result{white-space:pre-wrap;overflow-wrap:anywhere;color:#d8f36a;background:#080c12;border-radius:10px;padding:10px;min-height:38px}
+.cornerNote{position:absolute;inset:8%;border:2px solid rgba(216,243,106,.65);pointer-events:none;display:none}
+@media(min-width:700px){.controls{max-width:780px;width:100%;margin:auto}.top{padding-left:calc((100% - 780px)/2 + 15px);padding-right:calc((100% - 780px)/2 + 15px)}}
+</style></head>
+<body><div id="app"><header class="top"><div><div class="brand">SPENDLY / OPTICAL LINK</div><div class="mode">FULL-SCREEN CODE · V1</div></div><div style="font-size:11px;color:#aeb8c8">LAB BUILD</div></header>
+<div class="controls"><section class="panel"><h2 style="margin:0 0 6px">FullScreen Link</h2><p class="muted">The entire display becomes one optical data frame. Four corner anchors define the screen boundary; the cells inside carry the message. This is deliberately not a QR layout.</p>
+<label for="payload">Text to send</label><textarea id="payload" maxlength="90">SPENDLY FULLSCREEN V1</textarea><div class="buttons"><button id="showCode" class="primary">Show full-screen code</button><button id="openReader">Open camera scanner</button></div></section>
+<section class="panel"><b>How to test with two phones</b><p class="muted">1. Publish this page on GitHub Pages. 2. Open it on both phones. 3. On sender tap “Show full-screen code”. 4. On receiver tap “Open camera scanner” and aim at the sender display. Keep the sender screen inside the camera guide and start at a straight-on angle.</p><p class="muted" style="color:#ffd18c">V1 limitation: the receiver samples a regular grid, so align the screen nearly straight-on and fill the camera view. Perspective correction and robust error correction are future work. Do not use payment or private data.</p></section>
+<section class="panel"><b>What makes this different?</b><p class="muted">No central QR finder squares. The code is distributed across the whole screen, with custom corner anchors and a screen-edge frame. It is a visible full-screen code—not the earlier subtle brightness-pulsing idea.</p></section></div></div>
+<div id="codeView" class="hidden"><canvas id="matrix"></canvas><div id="overlay"><span>SPENDLY FULLSCREEN LINK</span><span id="frameState">READY</span></div><div id="codeActions"><button id="refreshCode">Refresh frame</button><button id="closeCode">Close</button></div></div>
+<div id="readerView" class="hidden"><div class="top"><div><div class="brand">SPENDLY / RECEIVER</div><div class="mode">ALIGN THE FOUR SCREEN CORNERS</div></div><button id="closeReader">Close</button></div><div id="videoWrap"><video id="video" autoplay muted playsinline></video><div class="cornerNote" id="guide"></div><canvas id="scanCanvas" width="600" height="900"></canvas></div><div id="readerPanel"><div class="buttons"><button id="enableCamera" class="primary">Enable camera</button><button id="scanNow">Scan frame</button></div><p class="muted" id="scanStatus">Allow camera access, align sender screen nearly edge-to-edge, then tap Scan frame.</p><div id="result">No decoded payload yet.</div></div></div>
+<script>
+(()=>{const $=id=>document.getElementById(id);const N=33;let stream=null,framePayload='',frameBits=[],lastDecoded='';
+const enc=new TextEncoder(),dec=new TextDecoder();
+function crc16(bytes){let c=0xffff;for(const b of bytes){c^=b<<8;for(let i=0;i<8;i++)c=(c&0x8000)?((c<<1)^0x1021)&65535:(c<<1)&65535}return c}
+function bytesBits(bytes){const a=[];for(const b of bytes)for(let i=7;i>=0;i--)a.push((b>>i)&1);return a}
+function makePacket(text){const p=Array.from(enc.encode(text));if(p.length>90)throw Error('Keep message at or below 90 UTF-8 bytes.');const body=[0x53,0x46,1,p.length,...p];const crc=crc16(body);body.push(crc>>8,crc&255);return body}
+function buildGrid(text){const cells=Array.from({length:N},()=>Array(N).fill(0));const fixed=Array.from({length:N},()=>Array(N).fill(false));
+function set(x,y,v){if(x>=0&&x<N&&y>=0&&y<N){cells[y][x]=v?1:0;fixed[y][x]=true}}
+function anchor(x0,y0,flipX,flipY){for(let y=0;y<5;y++)for(let x=0;x<5;x++){let xx=x0+(flipX?4-x:x),yy=y0+(flipY?4-y:y);let v=(x===0||x===4||y===0||y===4|| (x===2&&y===2));set(xx,yy,v)}}
+anchor(1,1,false,false);anchor(N-6,1,true,false);anchor(1,N-6,false,true);anchor(N-6,N-6,true,true);
+// Screen-wide perimeter framing, visually unlike QR.
+for(let i=7;i<N-7;i++){set(i,0,i%2===0);set(i,N-1,i%2===0);set(0,i,i%2===0);set(N-1,i,i%2===0)}
+const packet=makePacket(text),bits=bytesBits(packet);let k=0;
+for(let y=1;y<N-1;y++){for(let xx=1;xx<N-1;xx++){let x=(y%2)?xx:N-1-xx;if(fixed[y][x])continue;cells[y][x]=bits[k++]||0;}}
+return {cells,used:Math.min(k,bits.length),total:bits.length}}
+function draw(){framePayload=$('payload').value;let g;try{g=buildGrid(framePayload)}catch(e){alert(e.message);return}const c=$('matrix'),dpr=Math.min(devicePixelRatio||1,2);c.width=Math.floor(innerWidth*dpr);c.height=Math.floor(innerHeight*dpr);const ctx=c.getContext('2d');ctx.fillStyle='#050608';ctx.fillRect(0,0,c.width,c.height);
+const size=Math.min(c.width,c.height),cell=size/N,ox=(c.width-size)/2,oy=(c.height-size)/2;
+// High contrast code across almost the whole phone display.
+ctx.fillStyle='#f7f8f2';ctx.fillRect(ox,oy,size,size);
+for(let y=0;y<N;y++)for(let x=0;x<N;x++){const pad=cell*.055;ctx.fillStyle=g.cells[y][x]?'#0a0c10':'#f7f8f2';ctx.fillRect(ox+x*cell+pad,oy+y*cell+pad,cell-2*pad,cell-2*pad)}
+// Thin distinctive outer border + corner ticks.
+ctx.strokeStyle='#d8f36a';ctx.lineWidth=Math.max(2,dpr*3);ctx.strokeRect(ox+1,oy+1,size-2,size-2);
+$('frameState').textContent=`FRAME · ${g.total} DATA BITS`;lastDecoded='';}
+$('showCode').onclick=()=>{$('codeView').classList.remove('hidden');document.body.style.overflow='hidden';draw()};
+$('refreshCode').onclick=draw;$('closeCode').onclick=()=>{$('codeView').classList.add('hidden');document.body.style.overflow=''};
+$('openReader').onclick=()=>{$('readerView').classList.remove('hidden');document.body.style.overflow='hidden'};
+$('closeReader').onclick=()=>{$('readerView').classList.add('hidden');if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$('video').srcObject=null;document.body.style.overflow=''};
+$('enableCamera').onclick=async()=>{try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});$('video').srcObject=stream;$('scanStatus').textContent='Camera ready. Fill the preview with the sender screen and tap Scan frame.';$('guide').style.display='block'}catch(e){$('scanStatus').textContent='Camera error: '+e.message+'. Camera needs HTTPS and permission.'}};
+function sampleGrid(){const v=$('video'),c=$('scanCanvas');if(v.readyState<2)throw Error('Camera is not ready yet.');const vw=v.videoWidth,vh=v.videoHeight;if(!vw||!vh)throw Error('No camera frame available.');c.width=600;c.height=Math.max(600,Math.round(600*vh/vw));const ctx=c.getContext('2d',{willReadFrequently:true});ctx.fillStyle='#000';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(v,0,0,c.width,c.height);const W=c.width,H=c.height;const side=Math.min(W,H)*.88,ox=(W-side)/2,oy=(H-side)/2,cell=side/N;let vals=[];
+for(let y=0;y<N;y++)for(let x=0;x<N;x++){const px=Math.round(ox+(x+.5)*cell),py=Math.round(oy+(y+.5)*cell),im=ctx.getImageData(Math.max(0,px-2),Math.max(0,py-2),5,5).data;let sum=0;for(let i=0;i<im.length;i+=4)sum+=.2126*im[i]+.7152*im[i+1]+.0722*im[i+2];vals.push(sum/25)}
+const sorted=[...vals].sort((a,b)=>a-b),th=(sorted[Math.floor(sorted.length*.5)]||128);let cells=Array.from({length:N},()=>Array(N).fill(0)),idx=0;for(let y=0;y<N;y++)for(let x=0;x<N;x++)cells[y][x]=vals[idx++]<th?1:0;return cells}
+function decodeGrid(cells){const fixed=Array.from({length:N},()=>Array(N).fill(false));function anchor(x0,y0,flipX,flipY){let score=0,total=0;for(let y=0;y<5;y++)for(let x=0;x<5;x++){const xx=x0+(flipX?4-x:x),yy=y0+(flipY?4-y:y);const want=(x===0||x===4||y===0||y===4||(x===2&&y===2))?1:0;if(cells[yy][xx]===want)score++;total++}return score/total}
+const scores=[anchor(1,1,false,false),anchor(N-6,1,true,false),anchor(1,N-6,false,true),anchor(N-6,N-6,true,true)];if(scores.some(s=>s<.68))throw Error('Corner anchors not found. Move closer, reduce glare, and align the screen straight-on.');
+const bits=[];for(let y=1;y<N-1;y++){for(let xx=1;xx<N-1;xx++){let x=(y%2)?xx:N-1-xx;if((x<6&&y<6)||(x>=N-6&&y<6)||(x<6&&y>=N-6)||(x>=N-6&&y>=N-6))continue;bits.push(cells[y][x])}}
+const bytes=[];for(let i=0;i+7<bits.length;i+=8){let b=0;for(let j=0;j<8;j++)b=(b<<1)|bits[i+j];bytes.push(b)}
+if(bytes.length<6||bytes[0]!==0x53||bytes[1]!==0x46||bytes[2]!==1)throw Error('Frame detected but packet header did not match. Ensure the sender fills the camera view.');
+const n=bytes[3];if(n>90)throw Error('Invalid message length.');const end=4+n;if(bytes.length<end+2)throw Error('Incomplete data. Keep the full screen visible.');const body=bytes.slice(0,end),crc=(bytes[end]<<8)|bytes[end+1];if(crc16(body)!==crc)throw Error('Data check failed. Hold steady and scan again.');return dec.decode(new Uint8Array(bytes.slice(4,end)))}
+$('scanNow').onclick=()=>{try{const g=sampleGrid(),message=decodeGrid(g);$('result').textContent='✓ FRAME CHECK PASSED\\n'+message;$('scanStatus').textContent='Decoded successfully.'}catch(e){$('result').textContent='Not decoded yet.';$('scanStatus').textContent=e.message}};
+addEventListener('resize',()=>{if(!$('codeView').classList.contains('hidden'))draw()});
+})();
+</script></body></html>
